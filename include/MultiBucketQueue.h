@@ -58,18 +58,18 @@ class MultiBucketQueue {
         std::atomic<BucketID> topBkt{NULL_BKT};
 
         std::atomic<bool> queueLock{false};
-        inline void lock() { while (queueLock.load(std::memory_order_acquire)); }
-        inline void unlock() { queueLock.store(false, std::memory_order_release); }
+        inline void lock() { while (queueLock.load(std::memory_order_seq_cst)); }
+        inline void unlock() { queueLock.store(false, std::memory_order_seq_cst); }
         // Returns true if lock was previously acquired, false otherwise
         // A return value of false means that the lock is successfully acquired
         inline bool tryLock() { 
             // Perform non-stubborn try-locking: does not wait on an acquired lock
             // Already locked, try another queue
-            bool flag = queueLock.load(std::memory_order_acquire);
+            bool flag = queueLock.load(std::memory_order_seq_cst);
             if (flag) return flag;
             // Not locked, try setting flag
             return !queueLock.compare_exchange_weak(
-                flag, true, std::memory_order_acq_rel, std::memory_order_acquire);
+                flag, true, std::memory_order_seq_cst, std::memory_order_seq_cst);
         }
 
         ~PQContainer() {
@@ -221,17 +221,17 @@ public:
 
         // Update numEmpty status
         if (q.bq->empty()) {
-            numEmpty.fetch_sub(1, std::memory_order_acq_rel);
+            numEmpty.fetch_sub(1, std::memory_order_seq_cst);
         }
         
         q.bq->pushBatch(0, pushSize, pushBuffer);
         q.pushes += pushSize;
 
         // Update topBkt if needed
-        BucketID m = q.topBkt.load(std::memory_order_acquire);
+        BucketID m = q.topBkt.load(std::memory_order_seq_cst);
         BucketID cur = q.bq->getTopBkt();
         if (cur != m)
-            q.topBkt.store(cur, std::memory_order_release);
+            q.topBkt.store(cur, std::memory_order_seq_cst);
 
         q.unlock();
         pushBuffer.clear();
@@ -263,17 +263,17 @@ public:
         if (item) return item;
 
         // increment count and keep on trying to pop
-        uint64_t num = numIdle.fetch_add(1, std::memory_order_acq_rel) + 1;
+        uint64_t num = numIdle.fetch_add(1, std::memory_order_seq_cst) + 1;
         do {
             item = popInternal();
             if (item) break;
             if (num >= numThreads) return boost::none;
             
-            num = numIdle.load(std::memory_order_relaxed);
+            num = numIdle.load(std::memory_order_seq_cst);
 
         } while (true);
 
-        numIdle.fetch_sub(1, std::memory_order_acq_rel);
+        numIdle.fetch_sub(1, std::memory_order_seq_cst);
         return item;
     }
 
@@ -336,12 +336,12 @@ public:
                     j = threadLocalRandom();
                 }
 
-                BucketID bI = queues[i].topBkt.load(std::memory_order_acquire);
-                BucketID bJ = queues[j].topBkt.load(std::memory_order_acquire);
+                BucketID bI = queues[i].topBkt.load(std::memory_order_seq_cst);
+                BucketID bJ = queues[j].topBkt.load(std::memory_order_seq_cst);
 
                 // check if there are no tasks available
                 if (bI == NULL_BKT && bJ == NULL_BKT) {
-                    uint64_t emptyQueues = numEmpty.load(std::memory_order_acquire);
+                    uint64_t emptyQueues = numEmpty.load(std::memory_order_seq_cst);
                     if (emptyQueues >= queues.size()) break;
                     else continue;
                 }
@@ -375,11 +375,11 @@ public:
 
             // Update this queue's topBkt if necessary
             BucketID cur = q.bq->getTopBkt();
-            BucketID m = q.topBkt.load(std::memory_order_acquire);
+            BucketID m = q.topBkt.load(std::memory_order_seq_cst);
             if (cur != m) {
-                q.topBkt.store(cur, std::memory_order_release);
+                q.topBkt.store(cur, std::memory_order_seq_cst);
                 if (cur == NULL_BKT) // empty
-                    numEmpty.fetch_add(1, std::memory_order_acq_rel);
+                    numEmpty.fetch_add(1, std::memory_order_seq_cst);
             }
             q.unlock();
 

@@ -55,18 +55,18 @@ class MultiQueue {
         std::atomic<PrioType> top{std::numeric_limits<PrioType>::max()};
 
         std::atomic<bool> queueLock{false};
-        inline void lock() { while (queueLock.load(std::memory_order_acquire)); }
-        inline void unlock() { queueLock.store(false, std::memory_order_release); }
+        inline void lock() { while (queueLock.load(std::memory_order_seq_cst)); }
+        inline void unlock() { queueLock.store(false, std::memory_order_seq_cst); }
         // Returns true if lock was previously acquired, false otherwise
         // A return value of false means that the lock is successfully acquired
         inline bool tryLock() { 
             // Perform non-stubborn try-locking: does not wait on an acquired lock
             // Already locked, try another queue
-            bool flag = queueLock.load(std::memory_order_acquire);
+            bool flag = queueLock.load(std::memory_order_seq_cst);
             if (flag) return flag;
             // Not locked, try setting flag
             return !queueLock.compare_exchange_weak(
-                flag, true, std::memory_order_acq_rel, std::memory_order_acquire);
+                flag, true, std::memory_order_seq_cst, std::memory_order_seq_cst);
         }
 
     } __attribute__((aligned (CACHELINE)));
@@ -201,7 +201,7 @@ class MultiQueue {
 
         // Update numEmpty status
         if (q.pq.empty())
-            numEmpty.fetch_sub(1, std::memory_order_acq_rel);
+            numEmpty.fetch_sub(1, std::memory_order_seq_cst);
 
         for (uint32_t i = 0; i < pushSize; i++) {
 #ifdef PERF
@@ -217,7 +217,7 @@ class MultiQueue {
             q.pq.size() > 0 
                 ? std::get<0>(q.pq.top()) 
                 : std::numeric_limits<PrioType>::max(),
-            std::memory_order_release);
+            std::memory_order_seq_cst);
         
         q.unlock();
         pushBuffer.clear();
@@ -252,17 +252,17 @@ class MultiQueue {
         if (item) return item;
 
         // increment count and keep on trying to pop
-        uint64_t num = numIdle.fetch_add(1, std::memory_order_acq_rel) + 1;
+        uint64_t num = numIdle.fetch_add(1, std::memory_order_seq_cst) + 1;
         do {
             item = popInternal();
             if (item) break;
             if (num >= numThreads) return boost::none;
             
-            num = numIdle.load(std::memory_order_relaxed);
+            num = numIdle.load(std::memory_order_seq_cst);
 
         } while (true);
 
-        numIdle.fetch_sub(1, std::memory_order_acq_rel);
+        numIdle.fetch_sub(1, std::memory_order_seq_cst);
         return item;
     }
 
@@ -337,12 +337,12 @@ class MultiQueue {
                     j = threadLocalRandom();
                 }
 
-                PrioType topI = queues[i].top.load(std::memory_order_acquire);
-                PrioType topJ = queues[j].top.load(std::memory_order_acquire);
+                PrioType topI = queues[i].top.load(std::memory_order_seq_cst);
+                PrioType topJ = queues[j].top.load(std::memory_order_seq_cst);
 
                 // check if there are no tasks available
                 if (topI == EMPTY_PRIO && topJ == EMPTY_PRIO) {
-                    uint64_t emptyQueues = numEmpty.load(std::memory_order_acquire);
+                    uint64_t emptyQueues = numEmpty.load(std::memory_order_seq_cst);
                     if (emptyQueues >= queues.size()) break;
                     else continue;
                 }
@@ -383,14 +383,14 @@ class MultiQueue {
             }
             q.pops += num;
             if (q.pq.empty())
-                numEmpty.fetch_add(1, std::memory_order_acq_rel);
+                numEmpty.fetch_add(1, std::memory_order_seq_cst);
 
             // Update this queue's top element
             q.top.store(
                 q.pq.size() > 0 
                     ? std::get<0>(q.pq.top()) 
                     : EMPTY_PRIO,
-                std::memory_order_release
+                std::memory_order_seq_cst
             );
             q.unlock();
 
